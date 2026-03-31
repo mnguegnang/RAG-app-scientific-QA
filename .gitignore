@@ -1,0 +1,18 @@
+# Template leftovers (not relevant to RAG app)
+Oldfile-template/
+Localdeployplan/
+
+.vscode/
+node_modules/
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+
+# Environment
+.env
+__pycache__/
+*.pyc
+
+# Artifacts
+backend/app/artifacts/

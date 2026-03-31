@@ -1,0 +1,11 @@
+# Python
+__pycache__
+app.egg-info
+*.pyc
+.mypy_cache
+.coverage
+htmlcov
+.venv
+
+# Artifacts are downloaded from Google Drive at container startup — do not bake into image
+app/artifacts/

@@ -1,0 +1,27 @@
+# --- API Server ---
+fastapi==0.133.0
+uvicorn[standard]==0.41.0
+pydantic
+
+# --- Generative AI & Orchestration ---
+langchain-ollama==1.0.1
+langchain-core
+ollama==0.6.1
+
+# --- Retrieval AI (Dependencies) ---
+faiss-cpu==1.13.2
+sentence-transformers
+adapters==1.2.0
+
+# --- Additional Utilities ---
+numpy==2.2.6
+pandas==2.3.3
+nltk==3.9.3
+rank-bm25==0.2.2
+
+# Artifact Synchronization tool
+gdown
+
+# Code Synchronization: Installation of RAG project by downloading the source code directly from GitHub. 
+git+https://github.com/mnguegnang/RAG-for-Scientific-QA # Not needed when we already mount the source code as a volume in 
+                                                          # Docker Compose. The import in main.py works natively without this!

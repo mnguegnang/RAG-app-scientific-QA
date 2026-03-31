@@ -1,0 +1,5 @@
+# --- UI Framework ---
+chainlit==2.9.6
+
+# --- Asynchronous Web Requests ---
+httpx
