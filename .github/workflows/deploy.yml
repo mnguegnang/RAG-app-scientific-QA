@@ -1,0 +1,46 @@
+name: Build and Publish Docker Images
+
+# Trigger this pipeline every time I push to the 'master' branch
+on:
+  push:
+    branches:
+      - master
+
+# Required permissions for GitHub Actions to push to the Container Registry
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Download the code onto the GitHub Actions runner
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # 2. Log in to the GitHub Container Registry (GHCR) using the automatic GitHub token
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 3. Build and Push the Backend Image
+      - name: Build and push Backend API
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: true
+          # Tags the image with your repository name and the 'latest' tag
+          tags: ghcr.io/${{ github.repository_owner }}/rag-app-scientific-qa-backend:latest
+
+      # 4. Build and Push the Frontend Image
+      - name: Build and push Frontend UI
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/rag-app-scientific-qa-frontend:latest

@@ -260,7 +260,7 @@ async def chat_stream_endpoint(request: ChatRequest):
                 logging.info("HISTORY: Injecting %d entries into prompt.", len(request.history))
                 history_lines = [
                     f"[{t.get('role','user').capitalize()}]: {t.get('content','')[:500]}"
-                    for t in request.history[-6:]
+                    for t in request.history[-12:]
                 ]
                 history_section = (
                     "<Conversation History>\n"
@@ -280,7 +280,7 @@ async def chat_stream_endpoint(request: ChatRequest):
                     "stream": True,
                     "options": {"temperature": 0.1},
                 }
-                resp = _req.post(gen.api_url, json=payload, stream=True, timeout=300)
+                resp = _req.post(gen.api_url, json=payload, stream=True, timeout=900)
                 resp.raise_for_status()
                 print("\n" + "=" * 40 + " LLM OUTPUT (Streaming) " + "=" * 40 + "\n")
                 for line in resp.iter_lines():
