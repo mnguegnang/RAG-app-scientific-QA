@@ -1,4 +1,4 @@
-# Scientific RAG Question-Answering System
+# Scientific RAG Question-Answering Application
 
 > **Production-ready Retrieval-Augmented Generation (RAG) application** that retrieves and synthesises answers from a corpus of scientific NLP papers, with real-time token streaming and an interactive chat UI.
 
