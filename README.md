@@ -44,45 +44,55 @@ Deploy a **Retrieval-Augmented Generation (RAG) system** that:
 | **Real-Time Streaming** | Token-by-token NDJSON streaming from backend to frontend |
 | **Transparent Reasoning** | `<Reasoning>` and `<Final Answer>` tags expose the LLM's chain-of-thought |
 | **Cited References** | Only documents actually cited in the answer are shown, with click-to-expand content |
-| **Multi-Turn Memory** | Last 6 conversation turns are injected into the prompt for follow-up questions |
+| **Multi-Turn Memory** | Last 6 conversation pairs (12 messages) are injected into the prompt for follow-up questions |
 | **Auto Artifact Download** | FAISS indices are pulled from Google Drive on first boot if not already present |
+| **CI/CD Pipeline** | GitHub Actions builds and publishes Docker images to GHCR on every push to `master` |
 
 ---
 
 ## 2. System Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│                         Docker Compose                           │
-│                                                                  │
-│  ┌─────────────────────┐       ┌──────────────────────────────┐  │
-│  │   frontend-ui        │       │   backend-api                │  │
-│  │   (Chainlit 2.9)     │──────▶│   (FastAPI + Uvicorn)        │  │
-│  │   Port 8001          │ HTTP  │   Port 8080                  │  │
-│  └─────────────────────┘       │                              │  │
-│                                │  ┌──────────────────────────┐│  │
-│                                │  │  RAG Pipeline            ││  │
-│                                │  │  ┌─────────┐ ┌────────┐ ││  │
-│                                │  │  │ FAISS   │ │ BM25   │ ││  │
-│                                │  │  │ Dense   │ │ Sparse │ ││  │
-│                                │  │  └────┬────┘ └───┬────┘ ││  │
-│                                │  │       └─────┬────┘      ││  │
-│                                │  │        Reranker          ││  │
-│                                │  │        (Cross-Encoder)   ││  │
-│                                │  │             │            ││  │
-│                                │  │        CRAG Gate         ││  │
-│                                │  │             │            ││  │
-│                                │  │     LLM Generator        ││  │
-│  ┌─────────────────────┐       │  │     (Ollama / GPU)       ││  │
-│  │  Ollama (host)       │◀─────│  └──────────────────────────┘│  │
-│  │  llama3 model        │       └──────────────────────────────┘  │
-│  └─────────────────────┘                                         │
-│                                                                  │
-│  ┌─────────────────────┐                                         │
-│  │  Google Drive        │  ← FAISS indices auto-downloaded       │
-│  │  (artifacts)         │    on first boot via gdown             │
-│  └─────────────────────┘                                         │
-└──────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        CI / CD  (GitHub Actions)                        │
+│                                                                         │
+│  push to master ──▶ Build Docker Images ──▶ Publish to GHCR             │
+│                     (.github/workflows/       ghcr.io/mnguegnang/       │
+│                      deploy.yml)               rag-app-scientific-qa-*  │
+└────────────────────────────────┬────────────────────────────────────────┘
+                                 │  docker compose pull
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                      Production Host (Docker Compose)                   │
+│                                                                         │
+│  ┌─────────────────────┐       ┌──────────────────────────────┐         │
+│  │   frontend-ui        │       │   backend-api                │         │
+│  │   (Chainlit 2.9)     │──────▶│   (FastAPI + Uvicorn)        │         │
+│  │   Port 8001          │ HTTP  │   Port 8080                  │         │
+│  └─────────────────────┘       │                              │         │
+│                                │  ┌──────────────────────────┐│         │
+│                                │  │  RAG Pipeline            ││         │
+│                                │  │  ┌─────────┐ ┌────────┐ ││         │
+│                                │  │  │ FAISS   │ │ BM25   │ ││         │
+│                                │  │  │ Dense   │ │ Sparse │ ││         │
+│                                │  │  └────┬────┘ └───┬────┘ ││         │
+│                                │  │       └─────┬────┘      ││         │
+│                                │  │        Reranker          ││         │
+│                                │  │        (Cross-Encoder)   ││         │
+│                                │  │             │            ││         │
+│                                │  │        CRAG Gate         ││         │
+│                                │  │             │            ││         │
+│                                │  │     LLM Generator        ││         │
+│  ┌─────────────────────┐       │  │     (Ollama / GPU)       ││         │
+│  │  Ollama (host)       │◀─────│  └──────────────────────────┘│         │
+│  │  llama3 model        │       └──────────────────────────────┘         │
+│  └─────────────────────┘                                                │
+│                                                                         │
+│  ┌─────────────────────┐                                                │
+│  │  Google Drive        │  ← FAISS indices auto-downloaded              │
+│  │  (artifacts)         │    on first boot via gdown                    │
+│  └─────────────────────┘                                                │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -100,6 +110,8 @@ Deploy a **Retrieval-Augmented Generation (RAG) system** that:
 | **LLM (CPU)** | Ollama — Llama 3 | 0.6.1 |
 | **LLM (GPU)** | Transformers (auto-detected) | latest |
 | **Containerisation** | Docker Compose | v2+ |
+| **CI/CD** | GitHub Actions → GHCR | — |
+| **Container Registry** | GitHub Container Registry (GHCR) | — |
 | **Language** | Python | 3.10 |
 
 ---
@@ -160,7 +172,14 @@ gdown --fuzzy "https://drive.google.com/file/d/1Qxf1mKFEDKKOvEwphZJKv7mtp53MndYf
 gdown --fuzzy "https://drive.google.com/file/d/1F74_vEnlRC2St36twyhH7Ve5gHDU5rA4/view" -O backend/app/artifacts/sparse.pkl
 ```
 
-The volume mount in `compose.yml` (`./backend/app/artifacts:/app/artifacts:rw`) ensures downloaded artifacts persist across container restarts.
+Artifacts are downloaded inside the running container on first boot. Since the current `compose.yml` uses pre-built images without a volume mount, artifacts are re-downloaded if the container is recreated. For persistent caching, add a volume mount:
+
+```yaml
+services:
+  backend-api:
+    volumes:
+      - ./backend/app/artifacts:/app/artifacts:rw
+```
 
 ---
 
@@ -168,16 +187,21 @@ The volume mount in `compose.yml` (`./backend/app/artifacts:/app/artifacts:rw`) 
 
 ```
 .
-├── compose.yml                  # Docker Compose orchestration (backend + frontend)
+├── compose.yml                  # Docker Compose: pulls pre-built images from GHCR
 ├── .gitignore
+├── LICENSE
 ├── README.md                    # ← You are here
+│
+├── .github/
+│   └── workflows/
+│       └── deploy.yml           # GitHub Actions: build & publish images on push to master
 │
 ├── backend/
 │   ├── Dockerfile               # Python 3.10-slim, pip install, uvicorn entrypoint
 │   ├── requirements.txt         # FastAPI, FAISS, Sentence-Transformers, Ollama, gdown
 │   └── app/
 │       ├── main.py              # FastAPI app: lifespan loader, /api/chat, /api/chat/stream
-│       └── artifacts/           # FAISS indices (auto-downloaded or volume-mounted)
+│       └── artifacts/           # FAISS indices (auto-downloaded at runtime, git-ignored)
 │           ├── dense.index
 │           ├── dense.index.meta
 │           └── sparse.pkl
@@ -205,8 +229,9 @@ cd RAG-app-scientific-QA
 ollama serve &          # if not already running as a service
 ollama pull llama3
 
-# 3. Launch the full stack
-docker compose up --build
+# 3. Pull pre-built images and launch
+docker compose pull
+docker compose up -d
 ```
 
 | Service | URL |
@@ -222,10 +247,24 @@ docker compose up --build
 docker compose down
 ```
 
-### Rebuilding After Code Changes
+### CI/CD Pipeline — Automatic Image Publishing
+
+This project uses a **GitHub Actions CI/CD pipeline** (`.github/workflows/deploy.yml`) that automatically builds and publishes Docker images to the **GitHub Container Registry (GHCR)** on every push to the `master` branch.
+
+| Step | Action |
+|---|---|
+| **Trigger** | Push to `master` branch |
+| **Build** | Builds `backend/Dockerfile` and `frontend/Dockerfile` on GitHub-hosted runners |
+| **Publish** | Pushes images to `ghcr.io/mnguegnang/rag-app-scientific-qa-backend:latest` and `…-frontend:latest` |
+| **Deploy** | On the production host, run `docker compose pull && docker compose up -d` to update |
+
+This replaces the previous code-at-deploy-time pattern (where source code was pulled and built inside containers at deployment). Images are now **frozen at CI time**, ensuring reproducible deployments.
+
+### Updating to Latest Version
 
 ```bash
-docker compose up --build -d
+docker compose pull          # Pull latest images from GHCR
+docker compose up -d         # Recreate containers with new images
 ```
 
 ---

@@ -2,6 +2,7 @@
 fastapi==0.133.0
 uvicorn[standard]==0.41.0
 pydantic
+httpx
 
 # --- Generative AI & Orchestration ---
 langchain-ollama==1.0.1

@@ -2,8 +2,9 @@ import asyncio
 import json as json_module
 import os
 import logging
+import sys
 import gdown
-import threading
+import httpx
 import requests as _req_gdrive
 try:
     import torch as _torch
@@ -12,7 +13,7 @@ except ImportError:
     _CUDA_AVAILABLE = False
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from typing import Dict, List, Optional
 
@@ -177,46 +178,57 @@ async def chat_endpoint(request: ChatRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# --- STREAMING ENDPOINT ---
+# --- HEALTH CHECK ENDPOINT ---
+@app.get("/health")
+async def health_check():
+    """Returns 200 if the RAG pipeline is loaded and ready to serve requests."""
+    pipeline = ml_models.get("rag_pipeline")
+    if pipeline is None:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "unavailable", "detail": "RAG pipeline not loaded."},
+        )
+    return {"status": "healthy", "pipeline": "loaded"}
+
+
+# --- STREAMING ENDPOINT (native async — no threads) ---
 @app.post("/api/chat/stream")
 async def chat_stream_endpoint(request: ChatRequest):
-    """Streams tokens word-by-word via NDJSON for real-time UI updates."""
+    """Streams tokens word-by-word via NDJSON for real-time UI updates.
+
+    Architecture: pure async generator — blocking ML calls (retrieval,
+    reranking) are dispatched via ``asyncio.to_thread`` and Ollama
+    streaming uses ``httpx.AsyncClient`` so the event-loop is never
+    blocked and there are no thread-safety concerns.
+    """
     pipeline = ml_models.get("rag_pipeline")
     if not pipeline:
         raise HTTPException(status_code=500, detail="Model not loaded in memory.")
 
-    loop = asyncio.get_event_loop()
-    queue: asyncio.Queue = asyncio.Queue()
-
-    def run_pipeline():
-        import requests as _req
-        import sys
-
-        def _progress(stage: str):
-            loop.call_soon_threadsafe(
-                queue.put_nowait,
-                json_module.dumps({"type": "progress", "stage": stage})
-            )
+    async def event_stream():
+        def _ndjson(obj):
+            return json_module.dumps(obj) + "\n"
 
         try:
-            # ── Stage 1: Hybrid retrieval ────────────────────────────────────
+            # ── Stage 1: Hybrid retrieval (blocking → asyncio.to_thread) ──
             logging.info("Stage 1: Hybrid Search...")
-            _progress("retrieve_start")
-            broad_results = pipeline.retriever.search(request.prompt, k=50)
-            _progress("retrieve_done")
+            yield _ndjson({"type": "progress", "stage": "retrieve_start"})
+            broad_results = await asyncio.to_thread(
+                lambda: pipeline.retriever.search(request.prompt, k=50)
+            )
+            yield _ndjson({"type": "progress", "stage": "retrieve_done"})
 
             if not broad_results:
-                loop.call_soon_threadsafe(
-                    queue.put_nowait,
-                    json_module.dumps({"type": "error", "data": "No documents found in the database."})
-                )
+                yield _ndjson({"type": "error", "data": "No documents found in the database."})
                 return
 
-            # ── Stage 2: Rerank ──────────────────────────────────────────────
+            # ── Stage 2: Rerank (blocking → asyncio.to_thread) ───────────
             logging.info("Stage 2: Reranking...")
-            _progress("rerank_start")
-            top_docs = pipeline.reranker.rerank(request.prompt, broad_results, top_k=7)
-            _progress("rerank_done")
+            yield _ndjson({"type": "progress", "stage": "rerank_start"})
+            top_docs = await asyncio.to_thread(
+                lambda: pipeline.reranker.rerank(request.prompt, broad_results, top_k=7)
+            )
+            yield _ndjson({"type": "progress", "stage": "rerank_done"})
 
             # Send enriched context metadata immediately (id + title + preview + text)
             title_map = ml_models.get("title_map", {})
@@ -229,33 +241,26 @@ async def chat_stream_endpoint(request: ChatRequest):
                     doc_id = f"doc_{i + 1}"
                     text   = str(doc)
                 title = title_map.get(doc_id, doc_id)
-                # Extract first complete sentence as a human-readable preview
                 first_line = text.split(".")[0].split("\n")[0].strip()
                 preview = (first_line[:120] + "\u2026") if len(first_line) > 120 else first_line
                 context_metas.append({"id": doc_id, "title": title, "text": text, "preview": preview})
-            loop.call_soon_threadsafe(
-                queue.put_nowait,
-                json_module.dumps({"type": "contexts", "data": context_metas})
-            )
+            yield _ndjson({"type": "contexts", "data": context_metas})
 
-            # ── CRAG gate ────────────────────────────────────────────────────
+            # ── CRAG gate ────────────────────────────────────────────────
             best_score = max(d.get("rerank_score", 0.0) for d in top_docs)
             logging.info("CRAG check — best logit: %.4f (threshold: %.4f)", best_score, pipeline.CRAG_THRESHOLD)
             if best_score < pipeline.CRAG_THRESHOLD:
                 logging.warning("CRAG gate triggered.")
-                loop.call_soon_threadsafe(
-                    queue.put_nowait,
-                    json_module.dumps({"type": "token", "data": "The retrieved documents do not contain enough information to answer this question reliably."})
-                )
+                yield _ndjson({"type": "token", "data": "The retrieved documents do not contain enough information to answer this question reliably."})
                 return
 
-            # ── Stage 3: Stream from Ollama (terminal + frontend simultaneously)
+            # ── Stage 3: Stream from Ollama / GPU ────────────────────────
             logging.info("Stage 3: Streaming generation...")
-            _progress("generate_start")
+            yield _ndjson({"type": "progress", "stage": "generate_start"})
             gen = pipeline.generator
             full_prompt = gen._build_prompt(request.prompt, top_docs)
 
-            # ── Inject conversation history before the user query ─────────────
+            # ── Inject conversation history before the user query ────────
             if request.history:
                 logging.info("HISTORY: Injecting %d entries into prompt.", len(request.history))
                 history_lines = [
@@ -280,49 +285,34 @@ async def chat_stream_endpoint(request: ChatRequest):
                     "stream": True,
                     "options": {"temperature": 0.1},
                 }
-                resp = _req.post(gen.api_url, json=payload, stream=True, timeout=900)
-                resp.raise_for_status()
+                ollama_timeout = httpx.Timeout(
+                    connect=30.0, read=900.0, write=30.0, pool=30.0
+                )
                 print("\n" + "=" * 40 + " LLM OUTPUT (Streaming) " + "=" * 40 + "\n")
-                for line in resp.iter_lines():
-                    if line:
-                        body = json_module.loads(line.decode("utf-8"))
-                        token = body.get("response", "")
-                        if token:
-                            # Print to terminal and push to frontend simultaneously
-                            sys.stdout.write(token)
-                            sys.stdout.flush()
-                            loop.call_soon_threadsafe(
-                                queue.put_nowait,
-                                json_module.dumps({"type": "token", "data": token})
-                            )
-                        if body.get("done"):
-                            print("\n\n" + "=" * 92 + "\n")
-                            break
+                async with httpx.AsyncClient(timeout=ollama_timeout) as client:
+                    async with client.stream("POST", gen.api_url, json=payload) as resp:
+                        resp.raise_for_status()
+                        async for line in resp.aiter_lines():
+                            if line:
+                                body = json_module.loads(line)
+                                token = body.get("response", "")
+                                if token:
+                                    sys.stdout.write(token)
+                                    sys.stdout.flush()
+                                    yield _ndjson({"type": "token", "data": token})
+                                if body.get("done"):
+                                    print("\n\n" + "=" * 92 + "\n")
+                                    break
             else:
                 # Transformers (GPU) backend: full generation then word-by-word
-                answer = gen.generate_answer(request.prompt, top_docs)
+                answer = await asyncio.to_thread(
+                    gen.generate_answer, request.prompt, top_docs
+                )
                 for word in answer.split(" "):
-                    loop.call_soon_threadsafe(
-                        queue.put_nowait,
-                        json_module.dumps({"type": "token", "data": word + " "})
-                    )
+                    yield _ndjson({"type": "token", "data": word + " "})
 
         except Exception as e:
             logging.error(f"Streaming pipeline error: {e}")
-            loop.call_soon_threadsafe(
-                queue.put_nowait,
-                json_module.dumps({"type": "error", "data": str(e)})
-            )
-        finally:
-            loop.call_soon_threadsafe(queue.put_nowait, None)
-
-    threading.Thread(target=run_pipeline, daemon=True).start()
-
-    async def event_stream():
-        while True:
-            item = await queue.get()
-            if item is None:
-                break
-            yield item + "\n"
+            yield _ndjson({"type": "error", "data": str(e)})
 
     return StreamingResponse(event_stream(), media_type="text/plain")

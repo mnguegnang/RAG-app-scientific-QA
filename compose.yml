@@ -1,16 +1,23 @@
 services:
   backend-api:
     # THE UPGRADE: We no longer build from source. We pull the frozen image from GitHub!
-    image: ghcr.io/gmnguegnang/rag-app-scientific-qa-backend:latest
+    image: ghcr.io/mnguegnang/rag-app-scientific-qa-backend:latest
     network_mode: "host"
     environment:
       - OLLAMA_URL=http://localhost:11434/api/generate
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 300s
 
   frontend-ui:
     # Pull the frozen UI image
-    image: ghcr.io/gmnguegnang/rag-app-scientific-qa-frontend:latest
+    image: ghcr.io/mnguegnang/rag-app-scientific-qa-frontend:latest
     network_mode: "host"
     environment:
       - BACKEND_API_URL=http://localhost:8080/api/chat
     depends_on:
-      - backend-api
+      backend-api:
+        condition: service_healthy

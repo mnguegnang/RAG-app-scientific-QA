@@ -11,6 +11,11 @@ permissions:
   contents: read
   packages: write
 
+env:
+  REGISTRY: ghcr.io
+  BACKEND_IMAGE: ghcr.io/${{ github.repository_owner }}/rag-app-scientific-qa-backend
+  FRONTEND_IMAGE: ghcr.io/${{ github.repository_owner }}/rag-app-scientific-qa-frontend
+
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
@@ -28,19 +33,26 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 3. Build and Push the Backend Image
+      # 3. Build and Push the Backend Image (tagged with :latest AND :sha-<commit>)
       - name: Build and push Backend API
         uses: docker/build-push-action@v5
         with:
           context: ./backend
           push: true
-          # Tags the image with your repository name and the 'latest' tag
-          tags: ghcr.io/${{ github.repository_owner }}/rag-app-scientific-qa-backend:latest
+          tags: |
+            ${{ env.BACKEND_IMAGE }}:latest
+            ${{ env.BACKEND_IMAGE }}:sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
 
-      # 4. Build and Push the Frontend Image
+      # 4. Build and Push the Frontend Image (tagged with :latest AND :sha-<commit>)
       - name: Build and push Frontend UI
         uses: docker/build-push-action@v5
         with:
           context: ./frontend
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/rag-app-scientific-qa-frontend:latest
+          tags: |
+            ${{ env.FRONTEND_IMAGE }}:latest
+            ${{ env.FRONTEND_IMAGE }}:sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}

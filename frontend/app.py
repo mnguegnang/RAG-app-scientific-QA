@@ -283,6 +283,15 @@ async def main(message: cl.Message):
     msg.actions = [copy_action]
     await msg.update()
 
+    # ── Feature 1: save this exchange to session history (BEFORE references) ──
+    # Save early so that even if the references section fails, multi-turn
+    # memory is preserved for the next message.
+    history.append({"role": "user",      "content": message.content})
+    history.append({"role": "assistant", "content": final_answer})
+    # Keep last 6 pairs (12 entries) to avoid bloating the prompt
+    cl.user_session.set("history", history[-12:])
+    logging.info("HISTORY SAVE: now %d entries stored", len(history[-12:]))
+
     # ── References section (Feature 4) ────────────────────────────────────────
     # Only show documents actually cited in the answer — parse [Doc N] references.
     # Each title is the cl.Text element name so Chainlit auto-links it as clickable.
@@ -348,10 +357,3 @@ async def main(message: cl.Message):
                 ),
                 elements=ref_elements,
             ).send()
-
-    # ── Feature 1: save this exchange to session history ──────────────────────
-    history.append({"role": "user",      "content": message.content})
-    history.append({"role": "assistant", "content": final_answer})
-    # Keep last 6 pairs (12 entries) to avoid bloating the prompt
-    cl.user_session.set("history", history[-12:])
-    logging.info("HISTORY SAVE: now %d entries stored", len(history[-12:]))
