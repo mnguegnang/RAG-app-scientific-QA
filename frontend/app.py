@@ -29,9 +29,8 @@ async def on_chat_start():
     cl.user_session.set("history", [])
     await cl.Message(
         content=(
-            "Welcome to the **Scientific RAG Assistant**!\n\n"
+            "Welcome to the **Scientific RAG Chatboard Assistant**!\n\n"
             "Ask me anything about NLP research. "
-            "I remember your previous questions within this session."
         )
     ).send()
 

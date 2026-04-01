@@ -1,23 +1,16 @@
 services:
   backend-api:
-    build: ./backend
-    # LINUX SUPERPOWER: Drops the firewall. The container shares the laptop's network.
+    # THE UPGRADE: We no longer build from source. We pull the frozen image from GitHub!
+    image: ghcr.io/gmnguegnang/rag-app-scientific-qa-backend:latest
     network_mode: "host"
     environment:
-      # Now, localhost natively works!
       - OLLAMA_URL=http://localhost:11434/api/generate
-    volumes:
-      # Bind-mount the artifacts directory read-write so that:
-      # - On first boot: gdown writes downloaded files into the host directory.
-      # - On restart: existing files are detected and the download is skipped.
-      - ./backend/app/artifacts:/app/artifacts:rw
-
 
   frontend-ui:
-    build: ./frontend
+    # Pull the frozen UI image
+    image: ghcr.io/gmnguegnang/rag-app-scientific-qa-frontend:latest
     network_mode: "host"
     environment:
-      # The frontend can instantly see the backend natively on port 8080
       - BACKEND_API_URL=http://localhost:8080/api/chat
     depends_on:
       - backend-api
