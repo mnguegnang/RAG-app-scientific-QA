@@ -53,7 +53,7 @@ Deploy a **Retrieval-Augmented Generation (RAG) system** that:
 ## 2. System Architecture
 
 <p align="center">
-  <img src="rag_system_architecture.svg" alt="System Architecture" width="80%"/>
+  <img src="rag_system_architecture.svg" alt="System Architecture" width="100%"/>
 </p>
 
 
@@ -145,9 +145,10 @@ services:
 
 ## 6. Project Directory Structure
 
-<div align="center">
-  <iframe src="rag_project_structure.html" width="90%" height="500px" style="border:none;"></iframe>
-</div>
+
+<p align="center">
+  <img src="rag_app_project_structure.png" alt="Project Structure" width="80%"/>
+</p>
 
 
 ## 7. How to Run
