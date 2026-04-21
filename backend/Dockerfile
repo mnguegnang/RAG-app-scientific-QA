@@ -11,7 +11,7 @@ COPY requirements.txt .
 # Install the Python packages using standard pip
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of your RAG code
+# Copy the rest of  RAG code
 COPY . .
 
 # Start the FastAPI ASGI server

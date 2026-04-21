@@ -153,28 +153,93 @@ services:
 
 ## 7. How to Run
 
-### Quick Start (One Command)
+### Prerequisites checklist
+
+Before running, confirm the following are installed on your Linux host:
+
+- Docker Engine + Docker Compose v2 — `docker compose version`
+- Ollama — `ollama --version` (CPU mode only; skip for GPU-only Transformers path)
+- *(GPU only)* NVIDIA Container Toolkit — `nvidia-ctk --version`
+
+See [Section 4](#4-environment-setup--hardware-requirements) for install links.
+
+---
+
+### Step 1 — Clone the repository
 
 ```bash
-# 1. Clone the repository
 git clone https://github.com/mnguegnang/RAG-app-scientific-QA.git
 cd RAG-app-scientific-QA
-
-# 2. Ensure Ollama is running with Llama 3 (CPU mode)
-ollama serve &          # if not already running as a service
-ollama pull llama3
-
-# 3. Pull pre-built images and launch
-docker compose pull
-docker compose up -d
 ```
+
+---
+
+### Step 2 — Start Ollama and pull the model (CPU mode)
+
+> **Skip this step** if you are running in GPU mode (the backend auto-detects a CUDA device
+> and uses the HuggingFace Transformers backend instead of Ollama).
+
+```bash
+# Start Ollama daemon (skip if it is already running as a system service)
+ollama serve &
+
+# Wait until the Ollama API is accepting requests
+until curl -s http://localhost:11434/api/tags > /dev/null 2>&1; do sleep 2; done
+echo "Ollama ready"
+
+# Pull the Llama 3 model (~4.7 GB — only required once; cached on disk afterwards)
+ollama pull llama3
+```
+
+---
+
+### Step 3 — Pull images and launch
+
+```bash
+docker compose pull          # Pull frozen images from GHCR
+docker compose up -d         # Start both services in the background
+```
+
+> **macOS / Windows (Docker Desktop):** `network_mode: "host"` is a Linux-only feature.
+> Docker Desktop runs containers inside a Linux VM, so `localhost` inside the container
+> refers to that VM — not your machine. Pass `OLLAMA_URL` explicitly so the backend can
+> reach your host-installed Ollama:
+> ```bash
+> OLLAMA_URL=http://host.docker.internal:11434/api/generate docker compose up -d
+> ```
+
+---
+
+### Step 4 — Wait for the pipeline to initialise
+
+> **First boot takes 10–20 minutes** on a standard connection. The backend must download
+> the FAISS indices (~230 MB), the Sentence-Transformers embedding model (~400 MB), and
+> the cross-encoder reranker (~100+ MB) before it is ready.
+> Subsequent starts are instant (models are cached inside the container layer).
+
+```bash
+# Stream startup logs — wait for the line "RAG Pipeline is LIVE", then press Ctrl+C
+docker compose logs -f backend-api
+```
+
+```bash
+# Poll the health endpoint until the pipeline is loaded (run this in a second terminal)
+until curl -sf http://localhost:8080/health | grep -q '"status":"healthy"'; do
+  echo "Waiting for backend…"; sleep 10
+done
+echo "Backend is healthy — ready to use"
+```
+
+---
+
+### Step 5 — Open the application
 
 | Service | URL |
 |---|---|
 | **Chat UI (Chainlit)** | [http://localhost:8001](http://localhost:8001) |
-| **Backend API** | [http://localhost:8080/docs](http://localhost:8080/docs) |
+| **Backend API docs** | [http://localhost:8080/docs](http://localhost:8080/docs) |
 
-> **First boot** takes 3-5 minutes while FAISS indices (~230 MB total) are downloaded from Google Drive. Subsequent starts are instant.
+---
 
 ### Stopping
 
@@ -182,9 +247,22 @@ docker compose up -d
 docker compose down
 ```
 
+---
+
+### Updating to the latest version
+
+```bash
+docker compose pull          # Pull latest images from GHCR
+docker compose up -d         # Recreate containers with new images
+```
+
+---
+
 ### CI/CD Pipeline — Automatic Image Publishing
 
-This project uses a **GitHub Actions CI/CD pipeline** (`.github/workflows/deploy.yml`) that automatically builds and publishes Docker images to the **GitHub Container Registry (GHCR)** on every push to the `master` branch.
+This project uses a **GitHub Actions CI/CD pipeline** (`.github/workflows/deploy.yml`) that
+automatically builds and publishes Docker images to the **GitHub Container Registry (GHCR)**
+on every push to the `master` branch.
 
 | Step | Action |
 |---|---|
@@ -193,14 +271,8 @@ This project uses a **GitHub Actions CI/CD pipeline** (`.github/workflows/deploy
 | **Publish** | Pushes images to `ghcr.io/mnguegnang/rag-app-scientific-qa-backend:latest` and `…-frontend:latest` |
 | **Deploy** | On the production host, run `docker compose pull && docker compose up -d` to update |
 
-This replaces the previous code-at-deploy-time pattern (where source code was pulled and built inside containers at deployment). Images are now **frozen at CI time**, ensuring reproducible deployments.
-
-### Updating to Latest Version
-
-```bash
-docker compose pull          # Pull latest images from GHCR
-docker compose up -d         # Recreate containers with new images
-```
+Images are **frozen at CI time** (not built on the deployment host), ensuring reproducible
+deployments across environments.
 
 ---
 

@@ -230,10 +230,22 @@ async def main(message: cl.Message):
         except httpx.HTTPError as e:
             logging.error("HTTP error during streaming: %s", e)
             await cl.Message(content=f"**Backend Connection Error:** {e}").send()
+            if full_response.strip():
+                _partial = _parse_final_answer(full_response) or full_response.strip()
+                history.append({"role": "user",      "content": message.content})
+                history.append({"role": "assistant", "content": _partial})
+                cl.user_session.set("history", history[-12:])
+                logging.info("HISTORY SAVE (on HTTP error): %d entries", len(history[-12:]))
             return
         except Exception as e:
             logging.error("Unexpected error during streaming: %s", e, exc_info=True)
             await cl.Message(content=f"**Error:** {e}").send()
+            if full_response.strip():
+                _partial = _parse_final_answer(full_response) or full_response.strip()
+                history.append({"role": "user",      "content": message.content})
+                history.append({"role": "assistant", "content": _partial})
+                cl.user_session.set("history", history[-12:])
+                logging.info("HISTORY SAVE (on exception): %d entries", len(history[-12:]))
             return
 
     # ── Post-stream cleanup ───────────────────────────────────────────────────
@@ -270,6 +282,12 @@ async def main(message: cl.Message):
         cleaned = re.sub(r"</?(?:Reasoning|Final Answer)>", "", full_response, flags=re.IGNORECASE)
         final_answer = cleaned.strip()
 
+    # ── save exchange immediately after answer is finalized ──────────────────
+    history.append({"role": "user",      "content": message.content})
+    history.append({"role": "assistant", "content": final_answer})
+    cl.user_session.set("history", history[-12:])
+    logging.info("HISTORY SAVE: now %d entries stored", len(history[-12:]))
+
     # ── Copy-answer action (Feature 5) ────────────────────────────────────────
     copy_action = cl.Action(
         name="copy_answer",
@@ -282,15 +300,6 @@ async def main(message: cl.Message):
     msg.content = final_answer
     msg.actions = [copy_action]
     await msg.update()
-
-    # ── Feature 1: save this exchange to session history (BEFORE references) ──
-    # Save early so that even if the references section fails, multi-turn
-    # memory is preserved for the next message.
-    history.append({"role": "user",      "content": message.content})
-    history.append({"role": "assistant", "content": final_answer})
-    # Keep last 6 pairs (12 entries) to avoid bloating the prompt
-    cl.user_session.set("history", history[-12:])
-    logging.info("HISTORY SAVE: now %d entries stored", len(history[-12:]))
 
     # ── References section (Feature 4) ────────────────────────────────────────
     # Only show documents actually cited in the answer — parse [Doc N] references.
