@@ -128,6 +128,21 @@ async def lifespan(app: FastAPI):
         ml_models["title_map"] = title_map
         logging.info("Built title lookup for %d papers.", len(title_map))
 
+        # Verify the external RAG project's API contract used by the streaming endpoint.
+        # If the upstream project renames or removes any of these, startup fails immediately
+        # with a clear message instead of crashing silently mid-request.
+        pipeline = ml_models["rag_pipeline"]
+        missing = [
+            attr for attr in (
+                "retriever", "reranker", "crag_evaluator", "generator",
+            )
+            if not hasattr(pipeline, attr)
+        ]
+        if missing:
+            raise AttributeError(
+                f"ScientificRAGPipeline API mismatch — missing: {missing}. "
+                "Update the RAG_COMMIT pin in Dockerfile and reconcile main.py."
+            )
         logging.info("SERVER BOOT: RAG Pipeline is LIVE")
     except Exception as e:
         logging.error(f"CRITICAL: Failed to load FAISS artifacts. Check Docker Volumes: {e}")
@@ -246,19 +261,24 @@ async def chat_stream_endpoint(request: ChatRequest):
                 context_metas.append({"id": doc_id, "title": title, "text": text, "preview": preview})
             yield _ndjson({"type": "contexts", "data": context_metas})
 
-            # ── CRAG gate ────────────────────────────────────────────────
-            best_score = max(d.get("rerank_score", 0.0) for d in top_docs)
-            logging.info("CRAG check — best logit: %.4f (threshold: %.4f)", best_score, pipeline.CRAG_THRESHOLD)
-            if best_score < pipeline.CRAG_THRESHOLD:
-                logging.warning("CRAG gate triggered.")
-                yield _ndjson({"type": "token", "data": "The retrieved documents do not contain enough information to answer this question reliably."})
-                return
+            # ── CRAG evaluation (three-way: Correct / Ambiguous / Incorrect) ──
+            crag_action, refined_docs, crag_details = await asyncio.to_thread(
+                lambda: pipeline.crag_evaluator.evaluate_and_refine(request.prompt, top_docs)
+            )
+            logging.info("CRAG action=%s | details=%s", crag_action, crag_details)
+
+            if crag_action == 'Incorrect':
+                # Graceful degradation: use top-3 docs instead of refusing
+                refined_docs = sorted(
+                    top_docs, key=lambda x: x.get('rerank_score', 0.0), reverse=True
+                )[:3]
+                logging.warning("CRAG action=Incorrect: falling back to top-3 docs.")
 
             # ── Stage 3: Stream from Ollama / GPU ────────────────────────
             logging.info("Stage 3: Streaming generation...")
             yield _ndjson({"type": "progress", "stage": "generate_start"})
             gen = pipeline.generator
-            full_prompt = gen._build_prompt(request.prompt, top_docs)
+            full_prompt = gen._build_prompt(request.prompt, refined_docs)
 
             # ── Inject conversation history before the user query ────────
             if request.history:
@@ -306,7 +326,7 @@ async def chat_stream_endpoint(request: ChatRequest):
             else:
                 # Transformers (GPU) backend: full generation then word-by-word
                 answer = await asyncio.to_thread(
-                    gen.generate_answer, request.prompt, top_docs
+                    gen.generate_answer, request.prompt, refined_docs
                 )
                 for word in answer.split(" "):
                     yield _ndjson({"type": "token", "data": word + " "})

@@ -1,10 +1,20 @@
 services:
   backend-api:
-    # THE UPGRADE: We no longer build from source. We pull the frozen image from GitHub!
-    image: ghcr.io/mnguegnang/rag-app-scientific-qa-backend:latest
+    build: ./backend
     network_mode: "host"
     environment:
       - OLLAMA_URL=http://localhost:11434/api/generate
+      - HF_TOKEN=${HF_TOKEN}
+      - HF_HOME=/hf_cache
+    volumes:
+      - /teamspace/studios/this_studio/.cache/huggingface:/hf_cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
       interval: 30s
